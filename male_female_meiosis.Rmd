@@ -11,7 +11,7 @@ date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
 
 
 ### Human Spermatogenesis and female Fetal Germ Cells
-* Data from Wang et al (2018) and L. Li et all.(DOI: 10.1016/j.stem.2017.03.007)
+* Data from Wang et al (DOI: 10.1016/j.stem.2018.08.007) and L. Li et all.(DOI: 10.1016/j.stem.2017.03.007)
 ```{r, message=FALSE}
 ## Libraries
 suppressMessages(library(gridExtra))
