@@ -1,0 +1,166 @@
+---
+title: "Seurat - Male and female germ cells combined plots"
+output:
+  html_document:
+    keep_md: true
+    smart: false
+    theme: united
+    toc: true
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+---
+***
+
+### Human Spermatogenesis and female Fetal Germ Cells
+* Data from Wang et al (2018) and L. Li et all.(DOI: 10.1016/j.stem.2017.03.007)
+```{r, message=FALSE}
+## Libraries
+suppressMessages(library(gridExtra))
+suppressMessages(library(ggplot2))
+suppressMessages(library(Seurat))
+suppressMessages(library(ggplot2))
+suppressMessages(library(plotly))
+suppressMessages(library(dplyr))
+suppressMessages(library(gplots))
+
+output_dir  = getwd()
+```
+
+### Load the male female dataset
+```{r}
+object <- readRDS("/apth/to/248-FGC_RNAseq/analysis/maleFemale/revisit_2_march_2025/maleFemaleMeiosisEqualized.rds")
+```
+
+## tSNE and UMAP with prophase I cluster names
+UMAP looks better for the male population, with the cells spreading in a nice continuum. We will use UMAP going forward
+```{r}
+DimPlot(object = object, 
+        reduction = "tsne", 
+        group.by="original_ids")
+ggsave("tSNE.pdf", width = 10, height = 7)
+
+DimPlot(object = object, 
+        reduction = "umap", 
+        group.by="original_ids")
+ggsave("UMAP.pdf", width = 10, height = 7)
+```
+
+## Gender
+```{r}
+DimPlot(object = object, 
+        reduction = "umap", 
+        group.by="gender")
+ggsave("UMAP_gender.pdf", width = 10, height = 7)
+```
+
+## FeaturePlot of some of the marker genes from Fig 3.C from https://doi.org/10.1371/journal.pgen.1009773
+Plots looks well in line with Fan manuscript
+```{r}
+FeaturePlot(object=object, 
+            features=c("TEX19", "SPO11", "BRDT", "AURKA", "H1FOO"))
+FeaturePlot(object=object, 
+            features=c("PRDM9", "MEIOB", "BAZ2B", "BTG4", "FRMD3"))
+```
+
+## Gene expression on UMAP for selected genes
+```{r}
+FeaturePlot(object=object, 
+            features=c("SYCE2", "SYCP1", "SOHLH1", "TP63", "RAD51", "ZP2"))
+ggsave("UMAP_gene_expression.pdf")
+```
+
+## Redo the above plots individually and save then as a pdf
+Then we have high quality publication ready PDFs
+```{r}
+for (gene in c("SYCE2", "SYCP1", "SOHLH1", "TP63", "RAD51", "ZP2"))
+  {
+  FeaturePlot(object=object,
+              features=gene)
+  dir.create(sprintf("%s/feature_plots", output_dir))
+  ggsave(sprintf("%s/feature_plots/%s.pdf", output_dir,gene))
+}
+```
+
+# Heatmaps
+## Calculate the per group mean counts
+Based on the normalized and log transformed values
+```{r}
+# Calculate the per cluster mean expression
+groupIdentity <- as.factor(object@meta.data$original_ids)
+counts <- GetAssayData(object=object, slot="data")
+
+## Substiture cell ID with cluster ID
+colnames(counts) <- groupIdentity
+
+meanDF <- do.call(cbind, lapply(levels(groupIdentity), function(id){
+   groupCounts <- counts[, colnames(counts) == id]
+   df <- data.frame( c = apply(groupCounts, 1, mean))
+   colnames(df) <- id
+   return(df)
+}))
+
+# Put the columns (cell type IDs) in the desired order
+clusters_ordered <- c('F_L', 'F_Z-eP', 'F_P', 'F_D', 'M_L', 'M_Z-eP', 'M_P', 'M_D')
+meanDF <- meanDF[, clusters_ordered]
+```
+
+## Plot the heatmap
+```{r}
+genes <- c("DYNC2LI1", "ARL6", "ARL13B", "LZTFL", "CEP83", 
+           "EFCAB7", "WDR35", "IFT122", "IFT43", "IFT74", 
+           "IFT81", "RFX2", "RFX3", "RFX4", "FOXJ1", "TCTN1")
+meanDF_select <- as.matrix(meanDF[genes, ])
+
+heatmap.2(meanDF_select, 
+          col="bluered", 
+          trace = "none", 
+          Colv=FALSE)
+
+pdf("heatmap.pdf")
+heatmap.2(meanDF_select, 
+          col="bluered", 
+          trace = "none", 
+          Colv=FALSE)
+dev.off()
+```
+
+## Genes (rows) without dendrogram
+```{r}
+heatmap.2(meanDF_select, 
+          col="bluered", 
+          trace = "none",
+          dendrogram='none',
+          Colv=FALSE)
+
+pdf("heatmap_ommit_dendro.pdf")
+heatmap.2(meanDF_select, 
+          col="bluered", 
+          trace = "none",
+          dendrogram='none',
+          Colv=FALSE)
+dev.off()
+```
+
+## Z-score with and without dendro
+```{r}
+pdf("heatmap_zscore.pdf")
+heatmap.2(meanDF_select, 
+          col="bluered", 
+          trace = "none",
+          scale='row',
+          Colv=FALSE)
+dev.off()
+
+pdf("heatmap_zscore_ommit_dendro.pdf")
+heatmap.2(meanDF_select, 
+          col="bluered", 
+          trace = "none",
+          dendrogram='none',
+          scale='row',
+          Colv=FALSE)
+dev.off()
+```
+
+### sessionInfo
+```{r}
+sessionInfo()
+```
