@@ -1,0 +1,308 @@
+---
+title: "Seurat - Male and female germ cells combined"
+output:
+  html_document:
+    keep_md: true
+    smart: false
+    theme: united
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+---
+***
+
+
+### Human Spermatogenesis and female Fetal Germ Cells
+* Data from Wang et al (2018) and L. Li et all.(DOI: 10.1016/j.stem.2017.03.007)
+```{r, message=FALSE}
+## Libraries
+suppressMessages(library(gridExtra))
+suppressMessages(library(ggplot2))
+suppressMessages(library(Seurat))
+suppressMessages(library(ggplot2))
+suppressMessages(library(plotly))
+suppressMessages(library(dplyr))
+suppressMessages(library(genefilter))
+suppressMessages(library(gplots))
+
+outputDir  = getwd()
+```
+
+### Load data
+```{r, message=FALSE}
+## Load male data, select the clusters of interest
+male <- readRDS("/path/to/248-FGC_RNAseq/analysis/maleSeurat/revisit/male_mnn.rds")
+maleMeiosis <- subset(male, ident=c(0,1,3,5))
+maleMeiosis <- RenameIdents(object = maleMeiosis, 
+                            '0' = 'M_Z-eP',
+                            '1' = 'M_L', 
+                            '3' = 'M_P',
+                            '5' = 'M_D')
+maleMeiosis$original_ids <- Idents(maleMeiosis)
+
+## Load FGCs, late meiotic
+lateMeiot <- readRDS("/path/to/248-FGC_RNAseq/analysis/LiLiSeurat/revisitLateMeiot/lateMeiot.rds")
+lateMeiot <- subset(lateMeiot, ident=c(1,2,3,4))
+lateMeiot <- RenameIdents(object = lateMeiot,
+                          '1' = 'F_L',
+                          '4' = 'F_Z-eP',
+                          '3' = 'F_P',
+                          '2' = 'F_D')
+lateMeiot$original_ids <- Idents(lateMeiot)
+
+## Combine datasets
+maleFemaleMeiosis <- merge(maleMeiosis, y=lateMeiot, add.cell.ids = c("M_", "F_"))
+## Cells in each dataset
+dim(maleMeiosis)
+dim(lateMeiot)
+```
+
+### Confirm the saved male dataset is as expected by ploting the tSNE
+```{r}
+ DimPlot(object = male, 
+             reduction = "tsne")
+```
+
+## Share of cluster IDs in male cells
+```{r}
+cluster_table <- table(Idents(maleMeiosis))
+cluster_table
+cluster_table/sum(cluster_table)
+```
+
+### Fix numerical imbalance between datasets
+* There are 1312 cells in the male meiotic cells dataset, as oposed to 158 in the female. It is probably better for the male/female comparison to keep the numbers on par. Subsample the male to get a similar number of cells (160)
+* We want to have the per cluster share of males cells comparable before and after sampling.  set.seed(11) gives satisfactory results
+* We want the male cell selection to be reproducible. We save once the cell IDs in a file and use them for any future workflow run
+```{r, message=FALSE}
+set.seed(11)
+sampledCellIDs <- sample(x = colnames(maleMeiosis), size = 160, replace = FALSE)
+maleMeiosisSubsmpl <- subset(x = maleMeiosis, cells=sampledCellIDs) 
+cluster_table <- table(Idents(maleMeiosisSubsmpl))
+cluster_table
+cluster_table/sum(cluster_table)
+maleFemaleMeiosisEqualized <- merge(maleMeiosisSubsmpl, y=lateMeiot, add.cell.ids = c("M_", "F_"))
+```
+
+# Resume with the analysis workflow 
+## Process the combination with meiotic male intact
+### Find Variable Genes
+```{r, message=FALSE}
+maleFemaleMeiosis <- FindVariableFeatures(object = maleFemaleMeiosis, 
+                         mean.function = ExpMean, 
+                         dispersion.function = LogVMR,
+                         nfeatures = 2500)
+length(x = VariableFeatures(maleFemaleMeiosis))
+topAveExpr = HVFInfo(maleFemaleMeiosis)[HVFInfo(maleFemaleMeiosis)[,1]>3, ]
+topAveExprPath = paste0(outputDir, "/topAveExpr.tsv")
+write.table(x = topAveExpr, file = topAveExprPath, sep = "\t")
+```
+
+### Scaling the data
+```{r, message=FALSE}
+maleFemaleMeiosis <- ScaleData(object = maleFemaleMeiosis)
+```
+
+### PCA
+```{r, message=FALSE}
+maleFemaleMeiosis <- RunPCA(object = maleFemaleMeiosis, 
+              features = VariableFeatures(maleFemaleMeiosis), 
+              do.print = TRUE, 
+              pcs.print = 1:5, 
+              genes.print = 5)
+```
+
+### Vizualize PCA loadings
+```{r, message=FALSE}
+VizDimLoadings(object = maleFemaleMeiosis, 
+               dims = 1:2, 
+               reduction = "pca")
+ggsave(paste0(outputDir, "/vizPCA.pdf"), width = 10, height = 7)
+DimPlot(object = maleFemaleMeiosis, reduction = "pca")
+write.table(Loadings(object = maleFemaleMeiosis, reduction = "pca"), file = paste0(outputDir, "/geneLoadings.tsv"), sep = "\t", quote = FALSE)
+```
+
+### Elbow plot
+```{r, message=FALSE}
+ElbowPlot(object = maleFemaleMeiosis)
+## Print the percenatge of the standard deviation of each PC as a 
+## fraction of the total standard deviation od the first 20 PCs
+totalSdev <- sum(Stdev(object = maleFemaleMeiosis, reduction = "pca"))
+print(Stdev(object = maleFemaleMeiosis, reduction = "pca")/totalSdev)
+```
+
+### Calculate clusters, tSNEs and UMAP
+```{r, message=FALSE}
+maleFemaleMeiosis <- FindNeighbors(maleFemaleMeiosis,
+                                   reduction = "pca",
+                                   dims = 1:11)
+maleFemaleMeiosis <- FindClusters(object = maleFemaleMeiosis, 
+                                  resolution = 0.6)
+```
+
+```{r, message=FALSE}
+maleFemaleMeiosis <- RunTSNE(object = maleFemaleMeiosis, 
+                             dims = 1:11)
+maleFemaleMeiosis <- RunUMAP(object = maleFemaleMeiosis, 
+                             dims = 1:11)
+```
+
+### Plot tSNEs UMAP
+```{r, message=FALSE}
+DimPlot(object = maleFemaleMeiosis, 
+        reduction = "tsne")
+ggsave(paste0(outputDir, "/tSNE.pdf"), width = 10, height = 7)
+p <- DimPlot(object = maleFemaleMeiosis, 
+             reduction = "umap")
+ggplotly(p, width = 900, height = 700)
+ggsave(paste0(outputDir, "/UMAP.pdf"), width = 10, height = 7)
+DimPlot(object = maleFemaleMeiosis, 
+        reduction = "pca")
+ggsave(paste0(outputDir, "/PCA.pdf"), width = 10, height = 7)
+```
+
+## Get gender of cells and plot
+```{r, message=FALSE}
+gender <- sapply(colnames(x = maleFemaleMeiosis), function(x){
+  strsplit(x, split = "__", fixed = TRUE)[[1]][1]
+})
+maleFemaleMeiosis$gender <- gender
+p <- DimPlot(object = maleFemaleMeiosis, 
+             reduction = "tsne",
+             group.by = "gender")
+ggsave(paste0(outputDir, "/tSNE_gender.pdf"), width = 10, height = 7)
+```
+
+===================================================
+
+## Process the combination with male meitoic subsampled
+### Plot the selected cells on the plot with all male cells
+Check if the subsampled cells are representative of the male cell population
+```{r, message=FALSE}
+## Add the M_ in the cell ID
+sampledIDs <- paste0("M__",sampledCellIDs)
+p <- DimPlot(object = maleFemaleMeiosis, 
+             reduction = "tsne",
+             cells.highlight = sampledIDs)
+ggplotly(p, width = 900, height = 700)
+ggsave(paste0(outputDir, "/tSNE_sampled.pdf"), width = 10, height = 7)
+```
+
+# Work with the male female equalized dataset
+### Find Variable Genes
+```{r, message=FALSE}
+maleFemaleMeiosisEqualized <- FindVariableFeatures(object = maleFemaleMeiosisEqualized, 
+                         mean.function = ExpMean, 
+                         dispersion.function = LogVMR,
+                         nfeatures = 2500)
+length(x = VariableFeatures(maleFemaleMeiosisEqualized))
+topAveExpr = HVFInfo(maleFemaleMeiosisEqualized)[HVFInfo(maleFemaleMeiosisEqualized)[,1]>3, ]
+topAveExprPath = paste0(outputDir, "/topAveExpr.tsv")
+write.table(x = topAveExpr, file = topAveExprPath, sep = "\t")
+```
+
+### Scaling the data
+```{r, message=FALSE}
+maleFemaleMeiosisEqualized <- ScaleData(object = maleFemaleMeiosisEqualized)
+```
+
+### PCA
+```{r, message=FALSE}
+maleFemaleMeiosisEqualized <- RunPCA(object = maleFemaleMeiosisEqualized, 
+                                     features = VariableFeatures(maleFemaleMeiosisEqualized), 
+                                     do.print = TRUE, 
+                                     pcs.print = 1:5, 
+                                     genes.print = 5)
+```
+
+### Vizualize PCA loadings
+```{r, message=FALSE}
+VizDimLoadings(object = maleFemaleMeiosisEqualized, 
+               dims = 1:2, 
+               reduction = "pca")
+ggsave(paste0(outputDir, "/vizPCA_Eq.pdf"), width = 10, height = 7)
+DimPlot(object = maleFemaleMeiosisEqualized, reduction = "pca")
+write.table(Loadings(object = maleFemaleMeiosisEqualized, reduction = "pca"), file = paste0(outputDir, "/geneLoadings.tsv"), sep = "\t", quote = FALSE)
+```
+
+### Elbow plot
+```{r, message=FALSE}
+ElbowPlot(object = maleFemaleMeiosisEqualized)
+## Print the percenatge of the standard deviation of each PC as a 
+## fraction of the total standard deviation od the first 20 PCs
+totalSdev <- sum(Stdev(object = maleFemaleMeiosisEqualized, reduction = "pca"))
+print(Stdev(object = maleFemaleMeiosisEqualized, reduction = "pca")/totalSdev)
+```
+
+### tSNEs and UMAP
+```{r, message=FALSE}
+maleFemaleMeiosisEqualized <- RunTSNE(object = maleFemaleMeiosisEqualized, 
+                             dims = 1:11)
+maleFemaleMeiosisEqualized <- RunUMAP(object = maleFemaleMeiosisEqualized, 
+                             dims = 1:11)
+```
+
+### Plot tSNEs UMAP
+```{r, message=FALSE}
+DimPlot(object = maleFemaleMeiosisEqualized, 
+        reduction = "tsne",
+        group.by = "original_ids")
+ggsave(paste0(outputDir, "/tSNE_Eq.pdf"), width = 10, height = 7)
+DimPlot(object = maleFemaleMeiosisEqualized, 
+        reduction = "umap",
+        group.by = "original_ids")
+# ggplotly(p, width = 900, height = 700)
+ggsave(paste0(outputDir, "/UMAP_Eq.pdf"), width = 10, height = 7)
+DimPlot(object = maleFemaleMeiosisEqualized, 
+        reduction = "pca",
+        group.by = "original_ids")
+ggsave(paste0(outputDir, "/PCA_Eq.pdf"), width = 10, height = 7)
+```
+
+### Save genderof cells and plot
+```{r, message=FALSE}
+gender <- sapply(colnames(x = maleFemaleMeiosisEqualized), function(x){
+  strsplit(x, split = "__", fixed = TRUE)[[1]][1]
+})
+maleFemaleMeiosisEqualized$gender <- gender
+DimPlot(object = maleFemaleMeiosisEqualized, 
+        reduction = "umap",
+        group.by = "gender")
+ggsave(paste0(outputDir, "/umap_Eq_gender.pdf"), width = 10, height = 7)
+```
+
+### Calculate clusters
+```{r, message=FALSE}
+maleFemaleMeiosisEqualized <- FindNeighbors(maleFemaleMeiosisEqualized,
+                                   reduction = "pca",
+                                   dims = 1:11)
+maleFemaleMeiosisEqualized <- FindClusters(object = maleFemaleMeiosisEqualized, 
+                                  resolution = 1)
+```
+
+### Plot tSNEs UMAP again, with the newly calculated clusters
+```{r, message=FALSE}
+DimPlot(object = maleFemaleMeiosisEqualized, 
+        reduction = "tsne")
+ggsave(paste0(outputDir, "/tSNE_Eq_recalc.pdf"), width = 10, height = 7)
+p <- DimPlot(object = maleFemaleMeiosisEqualized, 
+             reduction = "umap")
+ggplotly(p, width = 900, height = 700)
+ggsave(paste0(outputDir, "/UMAP_Eq_recalc.pdf"), width = 10, height = 7)
+DimPlot(object = maleFemaleMeiosisEqualized, 
+        reduction = "pca")
+ggsave(paste0(outputDir, "/PCA_Eq_recalc.pdf"), width = 10, height = 7)
+```
+
+### Plot gender
+```{r, message=FALSE}
+DimPlot(object = maleFemaleMeiosisEqualized, 
+        reduction = "umap",
+        group.by = "gender")
+ggsave(paste0(outputDir, "/umap_Eq_gender_recalc.pdf"), width = 10, height = 7)
+saveRDS(maleFemaleMeiosisEqualized, file = paste0(outputDir, "/maleFemaleMeiosisEqualized.rds"))
+```
+
+
+### SessionInfo
+```{r}
+sessionInfo()
+```
